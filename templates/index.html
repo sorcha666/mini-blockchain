@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔗 Dashboard Blockchain - Nœud {{ node_id }}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Segoe UI',Tahoma,sans-serif;
+  background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+  color:#222;min-height:100vh;padding:20px
+}
+.container{max-width:1400px;margin:0 auto}
+header{text-align:center;color:#fff;margin-bottom:30px}
+h1{font-size:2.5em;text-shadow:2px 2px 4px rgba(0,0,0,.3)}
+.node-badge{background:rgba(255,255,255,.2);padding:8px 18px;border-radius:20px;display:inline-block}
+.card{background:#fff;border-radius:15px;padding:25px;margin-bottom:25px;box-shadow:0 10px 25px rgba(0,0,0,.15)}
+h2{color:#667eea;margin-bottom:15px;border-bottom:2px solid #eee;padding-bottom:5px}
+input,select{width:100%;padding:10px;margin:8px 0;border:2px solid #eee;border-radius:8px;font-size:15px}
+button{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:15px;cursor:pointer}
+button:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(102,126,234,.4)}
+.mine-btn{background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%)}
+.chart-container{position:relative;height:300px}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>🔗 Tableau de Bord Blockchain</h1>
+  <div class="node-badge">Nœud {{ node_id }} - Port {{ port }}</div>
+</header>
+
+<div class="card">
+  <h2>⚙️ Réglage de la Difficulté</h2>
+  <label>Modifier la difficulté (actuelle) :</label>
+  <input type="number" id="difficultyInput" min="1" step="1">
+  <button onclick="updateDifficulty()">Mettre à jour</button>
+  <p id="difficultyMsg"></p>
+</div>
+
+<div class="card">
+  <h2>📊 Statistiques Globales</h2>
+  <div class="chart-container">
+    <canvas id="timeChart"></canvas>
+  </div>
+</div>
+
+<div class="card">
+  <h2>💸 Nouvelle Transaction</h2>
+  <form id="txForm">
+    <label>Expéditeur</label><input id="sender" placeholder="Alice" required>
+    <label>Destinataire</label><input id="recipient" placeholder="Bob" required>
+    <label>Montant</label><input type="number" id="amount" step="0.01" min="0.01" placeholder="10" required>
+    <button type="submit">Ajouter</button>
+  </form>
+  <p id="txMsg"></p>
+</div>
+
+<div class="card">
+  <h2>⛏️ Minage</h2>
+  <label>Adresse du mineur :</label><input id="miner" value="miner1">
+  <button class="mine-btn" onclick="mine()">Miner les transactions</button>
+  <p id="mineMsg"></p>
+</div>
+
+<div class="card">
+  <h2>📦 Derniers Blocs</h2>
+  <div id="chain"></div>
+</div>
+
+<div class="card">
+  <h2>🌐 Réseau</h2>
+  <input id="nodeUrl" placeholder="http://localhost:5001">
+  <button onclick="addNode()">Ajouter nœud</button>
+  <button onclick="syncNodes()">Synchroniser chaînes</button>
+  <div id="nodes"></div>
+</div>
+</div>
+
+<script>
+let chart, chartData = {labels: [], times: []};
+
+async function loadStats() {
+  const r = await fetch('/stats');
+  const j = await r.json();
+  chartData.labels = j.blocks;
+  chartData.times = j.times;
+  chart.update();
+  document.getElementById('difficultyInput').value = j.difficulty;
+}
+async function updateDifficulty(){
+  const v = parseInt(document.getElementById('difficultyInput').value);
+  const r = await fetch('/difficulty/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({difficulty:v})});
+  const j = await r.json();
+  document.getElementById('difficultyMsg').textContent = j.message;
+  loadStats();
+}
+async function addNode(){
+  const url=document.getElementById('nodeUrl').value;
+  const r=await fetch('/nodes/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  const j=await r.json(); alert(j.message);
+}
+async function syncNodes(){
+  const r=await fetch('/nodes/resolve'); const j=await r.json(); alert(j.message);
+}
+document.getElementById('txForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const sender=document.getElementById('sender').value;
+  const recipient=document.getElementById('recipient').value;
+  const amount=parseFloat(document.getElementById('amount').value);
+  const r=await fetch('/transactions/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sender,recipient,amount})});
+  const j=await r.json(); document.getElementById('txMsg').textContent=j.message||j.error;
+  loadChain();
+});
+async function mine(){
+  const miner=document.getElementById('miner').value;
+  const r=await fetch(`/mine?miner=${miner}`); const j=await r.json();
+  document.getElementById('mineMsg').textContent=j.message; loadChain(); loadStats();
+}
+async function loadChain(){
+  const r=await fetch('/chain'); const data=await r.json();
+  const container=document.getElementById('chain'); container.innerHTML='';
+  [...data.chain].slice(-5).reverse().forEach(b=>{
+    const d=document.createElement('div'); d.className='card'; d.style.background='#f8f9fa';
+    d.innerHTML=`<strong>Bloc #${b.index}</strong><br>Hash: <code>${b.hash}</code><br>
+    <small>${b.transactions.length} transactions</small>`;
+    container.appendChild(d);
+  });
+}
+function initChart(){
+  const ctx=document.getElementById('timeChart');
+  chart=new Chart(ctx,{type:'line',data:{labels:chartData.labels,
+    datasets:[{label:'Temps de minage (s)',data:chartData.times,fill:false,borderColor:'#764ba2',tension:0.3}]},
+    options:{scales:{y:{beginAtZero:true}}}});
+}
+initChart();
+loadChain(); loadStats(); setInterval(()=>{loadChain();loadStats();},8000);
+</script>
+</body>
+</html>
