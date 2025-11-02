@@ -24,26 +24,41 @@ def index():
     return render_template_string(INDEX_HTML, node_id=NODE_ID, port=PORT)
 
 # ----- transactions -----
-@app.route('/transactions/new', methods=['POST'])
+from ecdsa import VerifyingKey, SECP256k1, BadSignatureError
+
+def verify_transaction(transaction, signature, pubkey_hex):
+    try:
+        vk = VerifyingKey.from_string(bytes.fromhex(pubkey_hex), curve=SECP256k1)
+        tx_copy = transaction.copy()
+        tx_copy.pop("signature", None)
+        tx_copy.pop("pubkey", None)
+        tx_str = json.dumps(tx_copy, sort_keys=True)
+        return vk.verify(bytes.fromhex(signature), tx_str.encode())
+    except (BadSignatureError, Exception):
+        return False
+
+
+@app.route("/transactions/new", methods=["POST"])
 def new_transaction():
     values = request.get_json()
-    required = ['sender', 'recipient', 'amount']
+    required = ["sender", "recipient", "amount", "signature", "pubkey"]
+
     if not all(k in values for k in required):
-        return jsonify({'error': 'Champs manquants'}), 400
-    try:
-        amount = float(values['amount'])
-        if amount <= 0:
-            return jsonify({'error': 'Le montant doit être positif'}), 400
-    except:
-        return jsonify({'error': 'Montant invalide'}), 400
-    # optional pubkey & signature for non-network txs
-    pubkey = values.get('pubkey')
-    signature = values.get('signature')
-    try:
-        tx = bc.create_transaction(values['sender'], values['recipient'], amount, pubkey=pubkey, signature=signature)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-    return jsonify({'message': 'Transaction ajoutée', 'transaction': tx, 'pending': len(bc.mempool)}), 201
+        return jsonify({"error": "Signature and pubkey required for non-network transactions"}), 400
+
+    # Verify the signature (skip for network rewards)
+    if values["sender"] != "network":
+        if not verify_transaction(values, values["signature"], values["pubkey"]):
+            return jsonify({"error": "Invalid signature"}), 400
+
+    tx = {
+        "sender": values["sender"],
+        "recipient": values["recipient"],
+        "amount": values["amount"],
+        "timestamp": time.time(),
+    }
+    blockchain.add_transaction(tx)
+    return jsonify({"message": "Transaction added!", "transaction": tx}), 201
 
 # ----- mining -----
 @app.route('/mine', methods=['GET'])
@@ -173,3 +188,4 @@ def stats():
 if __name__ == "__main__":
     print(f"🚀 Démarrage {NODE_ID} sur {BASE_URL}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
+
